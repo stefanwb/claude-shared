@@ -5,8 +5,9 @@ Shared [Claude Code](https://docs.anthropic.com/en/docs/claude-code) agents and 
 ## Structure
 
 ```
-agents/   # Custom agent definitions
-skills/   # Custom skill definitions
+agents/         # Custom agent definitions
+skills/         # Custom skill definitions
+claude-docker/  # Hardened Docker container for running Claude Code
 ```
 
 ## Usage
@@ -32,6 +33,10 @@ Copy skill directories to your local Claude Code config:
 ```bash
 cp -r skills/* ~/.claude/skills/
 ```
+
+### claude-docker
+
+Run Claude Code in a hardened container with isolated filesystem access and `gh`/`glab`/`aws` pre-installed. See [`claude-docker/README.md`](claude-docker/README.md) for the quickstart.
 
 ## Available Agents
 
