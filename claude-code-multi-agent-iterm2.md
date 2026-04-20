@@ -1,5 +1,7 @@
 # Claude Code Multi-Agent Setup (iTerm2 / macOS)
 
+> Running Claude Code inside `claude-docker`? Use its built-in `--iterm` / `--tmux` flags instead — see [`claude-docker/README.md`](claude-docker/README.md#split-pane-agent-teams). This doc covers host-side (non-Docker) setup only.
+
 ## Prerequisites
 
 - Claude Code CLI installed
