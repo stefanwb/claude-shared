@@ -5,9 +5,10 @@ Shared [Claude Code](https://docs.anthropic.com/en/docs/claude-code) agents and 
 ## Structure
 
 ```
-agents/         # Custom agent definitions
-skills/         # Custom skill definitions
-claude-docker/  # Hardened Docker container for running Claude Code
+agents/                             # Custom agent definitions
+skills/                             # Custom skill definitions
+claude-docker/                      # Hardened Docker container for running Claude Code
+claude-code-multi-agent-iterm2.md   # Host-side iTerm2/tmux setup for agent teams (non-Docker)
 ```
 
 ## Usage
