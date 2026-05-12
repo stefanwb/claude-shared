@@ -56,6 +56,25 @@ jobs:
           config: claude-docker/.hadolint.yaml
           failure-threshold: warning
 
+      - name: claude-code npm supply-chain audit
+        # Two policies enforced together against the version pinned in the
+        # Dockerfile: (1) tarball signed by npm's keyring over dist.integrity
+        # (`npm audit signatures`), (2) ≥5-day soak window since publish to
+        # let loud supply-chain attacks get yanked before we ingest them.
+        run: |
+          set -euo pipefail
+          VER=$(grep -oP '(?<=^ARG CLAUDE_CODE_VERSION=).+' claude-docker/Dockerfile)
+          PUBLISHED=$(npm view "@anthropic-ai/claude-code@${VER}" time --json | jq -r --arg v "$VER" '.[$v]')
+          AGE_DAYS=$(( ( $(date -u +%s) - $(date -u -d "$PUBLISHED" +%s) ) / 86400 ))
+          if (( AGE_DAYS < 5 )); then
+            echo "::error::@anthropic-ai/claude-code@${VER} is ${AGE_DAYS}d old (<5d soak). Published ${PUBLISHED}."
+            exit 1
+          fi
+          echo "Soak: @anthropic-ai/claude-code@${VER} is ${AGE_DAYS}d old (>=5d)."
+          # `npm audit signatures` needs an installed tree; install into a scratch dir.
+          SCRATCH=$(mktemp -d)
+          ( cd "$SCRATCH" && npm init -y >/dev/null && npm install --ignore-scripts --no-audit --no-fund --silent "@anthropic-ai/claude-code@${VER}" && npm audit signatures )
+
       - name: Install uv
         uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b  # v8.1.0
 
@@ -88,7 +107,23 @@ jobs:
         uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f  # v7.1.0
         with:
           context: claude-docker
-          push: false
+          # Load into the local daemon so the smoke test below can run the
+          # image. Build is amd64-only (single-arch load is fine); arm64
+          # coverage relies on the maintainers' local builds for now.
+          load: true
+          tags: claude-docker:ci
           platforms: linux/amd64
           cache-from: type=gha
           cache-to: type=gha,mode=min
+
+      - name: Smoke test — claude --version matches Dockerfile pin
+        # Catches the 2.1.x failure mode where the JS launcher is installed
+        # but the native-binary postinstall isn't run, leaving `claude` as a
+        # stub that errors at exec time. Asserts the actual reported version
+        # matches the CLAUDE_CODE_VERSION ARG in the Dockerfile.
+        run: |
+          set -euo pipefail
+          EXPECTED=$(grep -oP '(?<=^ARG CLAUDE_CODE_VERSION=).+' claude-docker/Dockerfile)
+          ACTUAL=$(docker run --rm claude-docker:ci claude --version)
+          echo "Expected: ${EXPECTED}  Actual: ${ACTUAL}"
+          [[ "$ACTUAL" == "${EXPECTED} (Claude Code)" ]]
