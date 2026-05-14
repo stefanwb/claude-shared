@@ -29,6 +29,8 @@ ARG UV_SHA256_X86_64=56dd1b66701ecb62fe896abb919444e4b83c5e8645cca953e6ddd496ff8
 ARG UV_SHA256_AARCH64=eee8dd658d20e5ac85fec9c2326b6cbc9d83a1eef09ef07433e58698ac849591
 ARG TFENV_VERSION=3.0.0
 ARG TFENV_SHA256=463132e45a211fa3faf85e62fdfaa9bb746343ff1954ccbad91cae743df3b648
+ARG TOFUENV_VERSION=1.0.7
+ARG TOFUENV_SHA256=047c6a01a0d4c7ded2cf126ae1e891bb3479b2544ec2d2f0d3951de2d08f6c7d
 
 # Make apt runnable under --cap-drop ALL at runtime. Two pieces:
 #  1. APT::Sandbox::User "root" stops the http method from setgroups()→_apt
@@ -154,6 +156,20 @@ RUN curl -fsSL "https://github.com/tfutils/tfenv/archive/refs/tags/v${TFENV_VERS
  && ln -s /opt/tfenv/bin/tfenv /usr/local/bin/tfenv \
  && ln -s /opt/tfenv/bin/terraform /usr/local/bin/terraform \
  && rm /tmp/tfenv.tar.gz
+
+# tofuenv — OpenTofu version manager. Same rationale as tfenv above:
+# pure-bash, arch-independent, ship NO tofu binary version (projects pin
+# their own via .opentofu-version). Installed under /opt for the same
+# upgrade-cleanliness reason — anything under /root would be frozen by the
+# claude-code-root named volume on first run.
+RUN curl -fsSL "https://github.com/tofuutils/tofuenv/archive/refs/tags/v${TOFUENV_VERSION}.tar.gz" \
+      -o /tmp/tofuenv.tar.gz \
+ && echo "${TOFUENV_SHA256}  /tmp/tofuenv.tar.gz" | sha256sum -c - \
+ && mkdir -p /opt/tofuenv \
+ && tar -xzf /tmp/tofuenv.tar.gz -C /opt/tofuenv --strip-components=1 \
+ && ln -s /opt/tofuenv/bin/tofuenv /usr/local/bin/tofuenv \
+ && ln -s /opt/tofuenv/bin/tofu /usr/local/bin/tofu \
+ && rm /tmp/tofuenv.tar.gz
 
 # Plain `tmux` mode swallows Shift+Enter so Claude's prompt sees only Enter,
 # forcing users to type `\` for a literal newline. `always` is required
