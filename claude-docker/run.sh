@@ -209,6 +209,57 @@ if [ "$WITH_GH" = "1" ] && [ -z "${GH_TOKEN:-}" ] && [ -z "${GITHUB_TOKEN:-}" ];
   fi
 fi
 
+# --glab fallback: mirrors --gh's `gh auth token` fallback. Users who ran
+# `glab auth login` interactively (the common case) don't otherwise export
+# GITLAB_TOKEN. Silent on failure (glab absent or not logged in).
+if [ "$WITH_GLAB" = "1" ] && [ -z "${GITLAB_TOKEN:-}" ]; then
+  if command -v glab >/dev/null 2>&1; then
+    glab_token=$(glab auth token 2>/dev/null || true)
+    if [ -n "$glab_token" ]; then
+      GITLAB_TOKEN="$glab_token"
+      export GITLAB_TOKEN
+      ENV_ARGS+=("-e" "GITLAB_TOKEN")
+    fi
+  fi
+fi
+
+# Enumerate authenticated hosts from gh/glab config files so the container
+# entrypoint can apply `git config --system url.<host>.insteadOf` for each.
+# Parsing is best-effort: on missing/unreadable/unparseable config, output
+# is empty and the entrypoint falls back to the canonical public host. The
+# config dirs may also be unreadable from inside the container (uid 0 + no
+# CAP_DAC_OVERRIDE vs uid 1000 mode 0700 dirs), which is why we parse on
+# the host where the user owns the files.
+#
+# gh: ~/.config/gh/hosts.yml — top-level keys are hostnames ("github.com:").
+_extract_gh_hosts() {
+  local cfg="$HOME/.config/gh/hosts.yml"
+  [ -r "$cfg" ] || return 0
+  awk '/^[A-Za-z0-9][A-Za-z0-9.-]*:[[:space:]]*$/ { sub(":[[:space:]]*$", ""); print }' "$cfg" \
+    | paste -sd, -
+}
+# glab: ~/.config/glab-cli/config.yml — hosts are under a `hosts:` key,
+# indented by two spaces.
+_extract_glab_hosts() {
+  local cfg="$HOME/.config/glab-cli/config.yml"
+  [ -r "$cfg" ] || return 0
+  awk '
+    /^hosts:[[:space:]]*$/ { in_hosts=1; next }
+    in_hosts && /^[^[:space:]]/ { in_hosts=0 }
+    in_hosts && /^  [A-Za-z0-9][A-Za-z0-9.-]*:[[:space:]]*$/ {
+      sub("^  ", ""); sub(":[[:space:]]*$", ""); print
+    }
+  ' "$cfg" | paste -sd, -
+}
+if [ "$WITH_GH" = "1" ]; then
+  gh_hosts=$(_extract_gh_hosts || true)
+  [ -n "$gh_hosts" ] && ENV_ARGS+=("-e" "CLAUDE_DOCKER_GITHUB_HOSTS=$gh_hosts")
+fi
+if [ "$WITH_GLAB" = "1" ]; then
+  glab_hosts=$(_extract_glab_hosts || true)
+  [ -n "$glab_hosts" ] && ENV_ARGS+=("-e" "CLAUDE_DOCKER_GITLAB_HOSTS=$glab_hosts")
+fi
+
 # Forward host git identity so in-container `git commit` works without a
 # per-invocation `-c user.email=...` dance. Non-opt-in: user.name/user.email
 # are already on every public commit the user has ever made, so there is no

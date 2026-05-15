@@ -1,0 +1,6 @@
+# entrypoint.sh runs inside the container — a CRLF shebang fails exec
+# with "no such file or directory". core.autocrlf=true on Windows clones
+# would otherwise rewrite this to CRLF in the working copy, which Docker
+# COPY then bakes into the image. Lock LF explicitly so the build is
+# correct regardless of the clone's autocrlf setting.
+entrypoint.sh text eol=lf
