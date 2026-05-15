@@ -21,15 +21,32 @@ When `--gh` is set and a GitHub token reaches the container (via host env var `G
 
 #### Scenario: glab auth token host fallback when GITLAB_TOKEN unset
 
-- **GIVEN** the host has `glab` installed and the user is authenticated (`glab auth status` succeeds)
+- **GIVEN** the host has `glab` installed and the user is authenticated (`glab auth status` succeeds) against at least one host enumerated in `~/.config/glab-cli/config.yml`
 - **AND** neither `GITLAB_TOKEN` nor any other host env var is exported
 - **WHEN** user runs `claude-docker --glab ~/repo`
-- **THEN** `run.sh` runs `glab auth token` on the host and forwards the result as `GITLAB_TOKEN` into the container
+- **THEN** `run.sh` walks the enumerated host list (or `gitlab.com` when enumeration is empty), invokes `glab auth token --hostname <host>` for each, and forwards the first non-empty result as `GITLAB_TOKEN` into the container
 - **AND** the in-container insteadOf rewrite is applied as if the user had exported the token manually
+
+#### Scenario: glab fallback finds self-hosted-only token
+
+- **GIVEN** the user is logged in ONLY to a self-hosted GitLab (e.g. `sbp.gitlab.schubergphilis.com`, no `gitlab.com` auth) — `~/.config/glab-cli/config.yml` has only the self-hosted host under `hosts:`
+- **AND** `GITLAB_TOKEN` is not exported on the host
+- **WHEN** user runs `claude-docker --glab ~/repo`
+- **THEN** `glab auth token --hostname sbp.gitlab.schubergphilis.com` returns the user's token and `run.sh` forwards it as `GITLAB_TOKEN`
+- **AND** the entrypoint writes `git config --system url."https://oauth2:<token>@sbp.gitlab.schubergphilis.com".insteadOf "https://sbp.gitlab.schubergphilis.com"`
+- **AND** plain `glab auth token` (no `--hostname`, which defaults to `gitlab.com`) would have returned empty — the host-aware fallback is what makes the self-hosted-only case work
+
+#### Scenario: gh fallback finds GH Enterprise-only token
+
+- **GIVEN** the user is logged in ONLY to a GitHub Enterprise host (e.g. `ghe.example.com`) — `~/.config/gh/hosts.yml` has only that host
+- **AND** neither `GH_TOKEN` nor `GITHUB_TOKEN` is exported
+- **WHEN** user runs `claude-docker --gh ~/repo`
+- **THEN** `gh auth token --hostname ghe.example.com` returns the user's token and `run.sh` forwards it as `GH_TOKEN`
+- **AND** the in-container insteadOf rewrite is applied for `https://ghe.example.com`
 
 #### Scenario: glab auth token fallback is silent when glab is unavailable
 
-- **GIVEN** neither `GITLAB_TOKEN` is set nor `glab` is on the host PATH (or `glab auth token` exits non-zero)
+- **GIVEN** neither `GITLAB_TOKEN` is set nor `glab` is on the host PATH (or `glab auth token` exits non-zero for every enumerated host)
 - **WHEN** user runs `claude-docker --glab ~/repo`
 - **THEN** the container starts without `GITLAB_TOKEN` set and no error is printed
 - **AND** no insteadOf rewrite is injected for any GitLab host

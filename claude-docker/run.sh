@@ -195,34 +195,6 @@ if [ "${#ENV_VARS[@]}" -gt 0 ]; then
     [ -n "${!v:-}" ] && ENV_ARGS+=("-e" "$v")
   done
 fi
-# --gh fallback: if neither GH_TOKEN nor GITHUB_TOKEN was forwarded, try the
-# gh CLI's active token so users authenticated via `gh auth login` don't have
-# to export anything manually. Silent on failure (gh absent or not logged in).
-if [ "$WITH_GH" = "1" ] && [ -z "${GH_TOKEN:-}" ] && [ -z "${GITHUB_TOKEN:-}" ]; then
-  if command -v gh >/dev/null 2>&1; then
-    gh_token=$(gh auth token 2>/dev/null)
-    if [ -n "$gh_token" ]; then
-      GH_TOKEN="$gh_token"
-      export GH_TOKEN
-      ENV_ARGS+=("-e" "GH_TOKEN")
-    fi
-  fi
-fi
-
-# --glab fallback: mirrors --gh's `gh auth token` fallback. Users who ran
-# `glab auth login` interactively (the common case) don't otherwise export
-# GITLAB_TOKEN. Silent on failure (glab absent or not logged in).
-if [ "$WITH_GLAB" = "1" ] && [ -z "${GITLAB_TOKEN:-}" ]; then
-  if command -v glab >/dev/null 2>&1; then
-    glab_token=$(glab auth token 2>/dev/null || true)
-    if [ -n "$glab_token" ]; then
-      GITLAB_TOKEN="$glab_token"
-      export GITLAB_TOKEN
-      ENV_ARGS+=("-e" "GITLAB_TOKEN")
-    fi
-  fi
-fi
-
 # Enumerate authenticated hosts from gh/glab config files so the container
 # entrypoint can apply `git config --system url.<host>.insteadOf` for each.
 # Parsing is best-effort: on missing/unreadable/unparseable config, output
@@ -251,14 +223,67 @@ _extract_glab_hosts() {
     }
   ' "$cfg" | paste -sd, -
 }
-if [ "$WITH_GH" = "1" ]; then
-  gh_hosts=$(_extract_gh_hosts || true)
-  [ -n "$gh_hosts" ] && ENV_ARGS+=("-e" "CLAUDE_DOCKER_GITHUB_HOSTS=$gh_hosts")
+
+# Compute host lists once per flag — reused for both the token fallback
+# below and CLAUDE_DOCKER_*_HOSTS forwarding to the entrypoint.
+gh_hosts=""
+glab_hosts=""
+[ "$WITH_GH" = "1" ]   && gh_hosts=$(_extract_gh_hosts   || true)
+[ "$WITH_GLAB" = "1" ] && glab_hosts=$(_extract_glab_hosts || true)
+
+# --gh fallback: if neither GH_TOKEN nor GITHUB_TOKEN was forwarded, walk
+# enumerated GitHub hosts (or default github.com) and call
+# `gh auth token --hostname <host>` until one returns a token. Users
+# authenticated only against a GH Enterprise host (not github.com) would
+# otherwise get an empty token from plain `gh auth token` (which defaults
+# to github.com) and silently lose the auto-injection. Silent on failure
+# (gh absent or not logged into any enumerated host).
+if [ "$WITH_GH" = "1" ] && [ -z "${GH_TOKEN:-}" ] && [ -z "${GITHUB_TOKEN:-}" ]; then
+  if command -v gh >/dev/null 2>&1; then
+    candidates="${gh_hosts:-github.com}"
+    old_ifs=$IFS; IFS=','
+    for host in $candidates; do
+      [ -n "$host" ] || continue
+      gh_token=$(gh auth token --hostname "$host" 2>/dev/null || true)
+      if [ -n "$gh_token" ]; then
+        GH_TOKEN="$gh_token"
+        export GH_TOKEN
+        ENV_ARGS+=("-e" "GH_TOKEN")
+        break
+      fi
+    done
+    IFS=$old_ifs
+  fi
 fi
-if [ "$WITH_GLAB" = "1" ]; then
-  glab_hosts=$(_extract_glab_hosts || true)
-  [ -n "$glab_hosts" ] && ENV_ARGS+=("-e" "CLAUDE_DOCKER_GITLAB_HOSTS=$glab_hosts")
+
+# --glab fallback: same host-aware shape as --gh's. Users logged in only
+# to a self-hosted GitLab (e.g. sbp.gitlab.schubergphilis.com, not
+# gitlab.com) would otherwise get an empty result from plain
+# `glab auth token`. Silent on failure.
+if [ "$WITH_GLAB" = "1" ] && [ -z "${GITLAB_TOKEN:-}" ]; then
+  if command -v glab >/dev/null 2>&1; then
+    candidates="${glab_hosts:-gitlab.com}"
+    old_ifs=$IFS; IFS=','
+    for host in $candidates; do
+      [ -n "$host" ] || continue
+      glab_token=$(glab auth token --hostname "$host" 2>/dev/null || true)
+      if [ -n "$glab_token" ]; then
+        GITLAB_TOKEN="$glab_token"
+        export GITLAB_TOKEN
+        ENV_ARGS+=("-e" "GITLAB_TOKEN")
+        break
+      fi
+    done
+    IFS=$old_ifs
+  fi
 fi
+
+# Forward the enumerated host lists into the container so the entrypoint
+# can write a `git config --system url.<host>.insteadOf` for each. When
+# empty (no config / unparseable), the entrypoint defaults to the
+# canonical public host.
+[ -n "$gh_hosts" ]   && ENV_ARGS+=("-e" "CLAUDE_DOCKER_GITHUB_HOSTS=$gh_hosts")
+[ -n "$glab_hosts" ] && ENV_ARGS+=("-e" "CLAUDE_DOCKER_GITLAB_HOSTS=$glab_hosts")
 
 # Forward host git identity so in-container `git commit` works without a
 # per-invocation `-c user.email=...` dance. Non-opt-in: user.name/user.email
