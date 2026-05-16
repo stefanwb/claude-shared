@@ -168,6 +168,17 @@ set -s extended-keys always
 set -as terminal-features "*:extkeys"
 EOF
 
+# claude-docker-entrypoint: translates forwarded credential tokens into
+# system-level `git insteadOf` rewrites at container start, so in-container
+# `git` can clone private HTTPS repos against hosts the matching --gh/--glab
+# flag is already authorising. Writes /etc/gitconfig (image-layer overlay,
+# discarded on `docker run --rm` exit) — never the named volume's /root.
+# See openspec/changes/add-git-insteadof/design.md.
+# Placed after the tmux conf so edits here don't invalidate heavier
+# upstream layers (apt/npm/glab/aws/uv/tfenv).
+COPY entrypoint.sh /usr/local/bin/claude-docker-entrypoint
+RUN chmod +x /usr/local/bin/claude-docker-entrypoint
+
 # DISABLE_AUTOUPDATER=1 keeps the pinned CLAUDE_CODE_VERSION authoritative —
 # without it, claude auto-replaces itself at runtime, defeating the
 # --ignore-scripts supply-chain pinning above. Bump the image to upgrade.
@@ -183,4 +194,5 @@ ENV CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 \
 
 WORKDIR /workspaces
 
+ENTRYPOINT ["/usr/local/bin/claude-docker-entrypoint"]
 CMD ["claude"]

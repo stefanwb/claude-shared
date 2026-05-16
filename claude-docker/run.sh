@@ -195,19 +195,125 @@ if [ "${#ENV_VARS[@]}" -gt 0 ]; then
     [ -n "${!v:-}" ] && ENV_ARGS+=("-e" "$v")
   done
 fi
-# --gh fallback: if neither GH_TOKEN nor GITHUB_TOKEN was forwarded, try the
-# gh CLI's active token so users authenticated via `gh auth login` don't have
-# to export anything manually. Silent on failure (gh absent or not logged in).
+# Enumerate authenticated hosts from gh/glab config files so the container
+# entrypoint can apply `git config --system url.<host>.insteadOf` for each.
+# Parsing is best-effort: on missing/unreadable/unparseable config, output
+# is empty and the entrypoint falls back to the canonical public host. The
+# config dirs may also be unreadable from inside the container (uid 0 + no
+# CAP_DAC_OVERRIDE vs uid 1000 mode 0700 dirs), which is why we parse on
+# the host where the user owns the files.
+#
+# gh: ~/.config/gh/hosts.yml — hostnames are top-level keys. Require at
+# least one dot in the key (every real GH host has one) so a future
+# unrelated top-level key doesn't get treated as a host.
+_extract_gh_hosts() {
+  local cfg="$HOME/.config/gh/hosts.yml"
+  [ -r "$cfg" ] || return 0
+  awk '/^[A-Za-z0-9][A-Za-z0-9.-]*\.[A-Za-z0-9-]+:[[:space:]]*$/ { sub(":[[:space:]]*$", ""); print }' "$cfg" \
+    | paste -sd, -
+}
+# glab: ~/.config/glab-cli/config.yml — hosts are nested under a `hosts:`
+# key. glab 1.97+ uses 4-space indent (1.92 used 2-space). Per-host
+# config keys live one level deeper (subfolder:, proxy:, api_protocol:
+# etc.) and also end with a colon. Match any indent depth and require a
+# dot in the key name to disambiguate from those config keys (none of
+# which contain dots).
+_extract_glab_hosts() {
+  local cfg="$HOME/.config/glab-cli/config.yml"
+  [ -r "$cfg" ] || return 0
+  awk '
+    /^hosts:[[:space:]]*$/ { in_hosts=1; next }
+    in_hosts && /^[^[:space:]]/ { in_hosts=0 }
+    in_hosts && /^[[:space:]]+[A-Za-z0-9][A-Za-z0-9.-]*\.[A-Za-z0-9-]+:[[:space:]]*$/ {
+      sub("^[[:space:]]+", ""); sub(":[[:space:]]*$", ""); print
+    }
+  ' "$cfg" | paste -sd, -
+}
+
+# Compute host lists once per flag — reused for both the token fallback
+# below and CLAUDE_DOCKER_*_HOSTS forwarding to the entrypoint. Honor a
+# pre-set CLAUDE_DOCKER_*_HOSTS env var as an explicit override / escape
+# hatch when config parsing doesn't fit the user's setup.
+gh_hosts=""
+glab_hosts=""
+if [ "$WITH_GH" = "1" ]; then
+  gh_hosts="${CLAUDE_DOCKER_GITHUB_HOSTS:-$(_extract_gh_hosts || true)}"
+fi
+if [ "$WITH_GLAB" = "1" ]; then
+  glab_hosts="${CLAUDE_DOCKER_GITLAB_HOSTS:-$(_extract_glab_hosts || true)}"
+fi
+
+# --gh fallback: if neither GH_TOKEN nor GITHUB_TOKEN was forwarded, walk
+# enumerated GitHub hosts (or default github.com) and call
+# `gh auth token --hostname <host>` until one returns a token. Users
+# authenticated only against a GH Enterprise host (not github.com) would
+# otherwise get an empty token from plain `gh auth token` (which defaults
+# to github.com) and silently lose the auto-injection. Silent on failure
+# (gh absent or not logged into any enumerated host).
 if [ "$WITH_GH" = "1" ] && [ -z "${GH_TOKEN:-}" ] && [ -z "${GITHUB_TOKEN:-}" ]; then
   if command -v gh >/dev/null 2>&1; then
-    gh_token=$(gh auth token 2>/dev/null)
-    if [ -n "$gh_token" ]; then
-      GH_TOKEN="$gh_token"
-      export GH_TOKEN
-      ENV_ARGS+=("-e" "GH_TOKEN")
-    fi
+    candidates="${gh_hosts:-github.com}"
+    old_ifs=$IFS; IFS=','
+    for host in $candidates; do
+      [ -n "$host" ] || continue
+      gh_token=$(gh auth token --hostname "$host" 2>/dev/null || true)
+      if [ -n "$gh_token" ]; then
+        GH_TOKEN="$gh_token"
+        export GH_TOKEN
+        ENV_ARGS+=("-e" "GH_TOKEN")
+        break
+      fi
+    done
+    IFS=$old_ifs
   fi
 fi
+
+# --glab fallback: parse the glab config file directly to extract the
+# token for each enumerated host (or default gitlab.com when enumeration
+# is empty). We deliberately do NOT call `glab auth token` here because
+# that subcommand isn't present across glab releases (1.97 doesn't have
+# it; the documented method is `glab auth status --show-token` whose
+# output is human-formatted). The on-disk YAML config has a stable
+# schema across versions and is owned by the invoking user (uid 1000),
+# so it's the most reliable source.
+if [ "$WITH_GLAB" = "1" ] && [ -z "${GITLAB_TOKEN:-}" ]; then
+  cfg="$HOME/.config/glab-cli/config.yml"
+  if [ -r "$cfg" ]; then
+    candidates="${glab_hosts:-gitlab.com}"
+    old_ifs=$IFS; IFS=','
+    for host in $candidates; do
+      [ -n "$host" ] || continue
+      glab_token=$(awk -v target="$host" '
+        function trim(s) { sub(/^[[:space:]]+/, "", s); sub(/[[:space:]]+$/, "", s); return s }
+        BEGIN { in_host = 0 }
+        {
+          t = trim($0)
+          if (t == target ":") { in_host = 1; next }
+          if (in_host && t ~ /^[A-Za-z0-9][A-Za-z0-9.-]*\.[A-Za-z0-9-]+:$/) in_host = 0
+          if (in_host && t ~ /^token:[[:space:]]+/) {
+            sub(/^token:[[:space:]]+/, "", t); sub(/[[:space:]]+$/, "", t)
+            gsub(/^"|"$/, "", t)
+            print t; exit
+          }
+        }
+      ' "$cfg" 2>/dev/null)
+      if [ -n "$glab_token" ]; then
+        GITLAB_TOKEN="$glab_token"
+        export GITLAB_TOKEN
+        ENV_ARGS+=("-e" "GITLAB_TOKEN")
+        break
+      fi
+    done
+    IFS=$old_ifs
+  fi
+fi
+
+# Forward the enumerated host lists into the container so the entrypoint
+# can write a `git config --system url.<host>.insteadOf` for each. When
+# empty (no config / unparseable), the entrypoint defaults to the
+# canonical public host.
+[ -n "$gh_hosts" ]   && ENV_ARGS+=("-e" "CLAUDE_DOCKER_GITHUB_HOSTS=$gh_hosts")
+[ -n "$glab_hosts" ] && ENV_ARGS+=("-e" "CLAUDE_DOCKER_GITLAB_HOSTS=$glab_hosts")
 
 # Forward host git identity so in-container `git commit` works without a
 # per-invocation `-c user.email=...` dance. Non-opt-in: user.name/user.email

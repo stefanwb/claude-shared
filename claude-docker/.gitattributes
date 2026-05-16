@@ -1,0 +1,8 @@
+# All shell scripts here run in environments that fail on CRLF line endings:
+# entrypoint.sh runs inside the container (CRLF shebang fails exec with
+# "no such file or directory"); run.sh runs from WSL on Windows hosts (same
+# failure mode — /usr/bin/env can't find "bash\r"). core.autocrlf=true on
+# Windows clones rewrites them to CRLF in the working copy by default. Lock
+# LF for every .sh under this directory so the build / wrapper invocation
+# work regardless of the clone's autocrlf setting.
+*.sh text eol=lf
