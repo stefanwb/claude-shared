@@ -268,17 +268,35 @@ if [ "$WITH_GH" = "1" ] && [ -z "${GH_TOKEN:-}" ] && [ -z "${GITHUB_TOKEN:-}" ];
   fi
 fi
 
-# --glab fallback: same host-aware shape as --gh's. Users logged in only
-# to a self-hosted GitLab (e.g. sbp.gitlab.schubergphilis.com, not
-# gitlab.com) would otherwise get an empty result from plain
-# `glab auth token`. Silent on failure.
+# --glab fallback: parse the glab config file directly to extract the
+# token for each enumerated host (or default gitlab.com when enumeration
+# is empty). We deliberately do NOT call `glab auth token` here because
+# that subcommand isn't present across glab releases (1.97 doesn't have
+# it; the documented method is `glab auth status --show-token` whose
+# output is human-formatted). The on-disk YAML config has a stable
+# schema across versions and is owned by the invoking user (uid 1000),
+# so it's the most reliable source.
 if [ "$WITH_GLAB" = "1" ] && [ -z "${GITLAB_TOKEN:-}" ]; then
-  if command -v glab >/dev/null 2>&1; then
+  cfg="$HOME/.config/glab-cli/config.yml"
+  if [ -r "$cfg" ]; then
     candidates="${glab_hosts:-gitlab.com}"
     old_ifs=$IFS; IFS=','
     for host in $candidates; do
       [ -n "$host" ] || continue
-      glab_token=$(glab auth token --hostname "$host" 2>/dev/null || true)
+      glab_token=$(awk -v target="$host" '
+        function trim(s) { sub(/^[[:space:]]+/, "", s); sub(/[[:space:]]+$/, "", s); return s }
+        BEGIN { in_host = 0 }
+        {
+          t = trim($0)
+          if (t == target ":") { in_host = 1; next }
+          if (in_host && t ~ /^[A-Za-z0-9][A-Za-z0-9.-]*\.[A-Za-z0-9-]+:$/) in_host = 0
+          if (in_host && t ~ /^token:[[:space:]]+/) {
+            sub(/^token:[[:space:]]+/, "", t); sub(/[[:space:]]+$/, "", t)
+            gsub(/^"|"$/, "", t)
+            print t; exit
+          }
+        }
+      ' "$cfg" 2>/dev/null)
       if [ -n "$glab_token" ]; then
         GITLAB_TOKEN="$glab_token"
         export GITLAB_TOKEN
