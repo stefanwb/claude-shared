@@ -203,33 +203,45 @@ fi
 # CAP_DAC_OVERRIDE vs uid 1000 mode 0700 dirs), which is why we parse on
 # the host where the user owns the files.
 #
-# gh: ~/.config/gh/hosts.yml — top-level keys are hostnames ("github.com:").
+# gh: ~/.config/gh/hosts.yml — hostnames are top-level keys. Require at
+# least one dot in the key (every real GH host has one) so a future
+# unrelated top-level key doesn't get treated as a host.
 _extract_gh_hosts() {
   local cfg="$HOME/.config/gh/hosts.yml"
   [ -r "$cfg" ] || return 0
-  awk '/^[A-Za-z0-9][A-Za-z0-9.-]*:[[:space:]]*$/ { sub(":[[:space:]]*$", ""); print }' "$cfg" \
+  awk '/^[A-Za-z0-9][A-Za-z0-9.-]*\.[A-Za-z0-9-]+:[[:space:]]*$/ { sub(":[[:space:]]*$", ""); print }' "$cfg" \
     | paste -sd, -
 }
-# glab: ~/.config/glab-cli/config.yml — hosts are under a `hosts:` key,
-# indented by two spaces.
+# glab: ~/.config/glab-cli/config.yml — hosts are nested under a `hosts:`
+# key. glab 1.97+ uses 4-space indent (1.92 used 2-space). Per-host
+# config keys live one level deeper (subfolder:, proxy:, api_protocol:
+# etc.) and also end with a colon. Match any indent depth and require a
+# dot in the key name to disambiguate from those config keys (none of
+# which contain dots).
 _extract_glab_hosts() {
   local cfg="$HOME/.config/glab-cli/config.yml"
   [ -r "$cfg" ] || return 0
   awk '
     /^hosts:[[:space:]]*$/ { in_hosts=1; next }
     in_hosts && /^[^[:space:]]/ { in_hosts=0 }
-    in_hosts && /^  [A-Za-z0-9][A-Za-z0-9.-]*:[[:space:]]*$/ {
-      sub("^  ", ""); sub(":[[:space:]]*$", ""); print
+    in_hosts && /^[[:space:]]+[A-Za-z0-9][A-Za-z0-9.-]*\.[A-Za-z0-9-]+:[[:space:]]*$/ {
+      sub("^[[:space:]]+", ""); sub(":[[:space:]]*$", ""); print
     }
   ' "$cfg" | paste -sd, -
 }
 
 # Compute host lists once per flag — reused for both the token fallback
-# below and CLAUDE_DOCKER_*_HOSTS forwarding to the entrypoint.
+# below and CLAUDE_DOCKER_*_HOSTS forwarding to the entrypoint. Honor a
+# pre-set CLAUDE_DOCKER_*_HOSTS env var as an explicit override / escape
+# hatch when config parsing doesn't fit the user's setup.
 gh_hosts=""
 glab_hosts=""
-[ "$WITH_GH" = "1" ]   && gh_hosts=$(_extract_gh_hosts   || true)
-[ "$WITH_GLAB" = "1" ] && glab_hosts=$(_extract_glab_hosts || true)
+if [ "$WITH_GH" = "1" ]; then
+  gh_hosts="${CLAUDE_DOCKER_GITHUB_HOSTS:-$(_extract_gh_hosts || true)}"
+fi
+if [ "$WITH_GLAB" = "1" ]; then
+  glab_hosts="${CLAUDE_DOCKER_GITLAB_HOSTS:-$(_extract_glab_hosts || true)}"
+fi
 
 # --gh fallback: if neither GH_TOKEN nor GITHUB_TOKEN was forwarded, walk
 # enumerated GitHub hosts (or default github.com) and call
