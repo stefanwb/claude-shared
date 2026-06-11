@@ -8,12 +8,27 @@ The VCS and cloud CLIs (`gh`, `glab`, `aws`) need a flag to see host credentials
 
 ```bash
 # Build the image from your checkout (one-time; rerun after Dockerfile changes)
-docker build -t claude-code:local ./claude-docker
+docker build -t claude-code:local ./claude-docker   # or: podman build -t claude-code:local ./claude-docker
 
 # Put on your PATH (create ~/bin if it doesn't exist)
 mkdir -p ~/bin
 ln -s "$(pwd)/claude-docker/run.sh" ~/bin/claude-docker
+ln -s "$(pwd)/claude-docker/run.sh" ~/bin/claude-podman   # optional: same script, forces podman
 ```
+
+The wrapper is the single `run.sh`; the two names are the same file. On platforms where symlinks are awkward (e.g. Git Bash on Windows without Developer Mode), `cp` the script to each name instead of `ln -s`.
+
+### Container runtime (docker / podman)
+
+The same wrapper drives either engine. Selection precedence:
+
+1. `CLAUDE_DOCKER_RUNTIME=docker|podman` — explicit override, always wins.
+2. The name it's invoked as — running it as **`claude-podman`** forces podman; **`claude-docker`** auto-detects.
+3. Auto-detect — prefer `docker` when on PATH (the default on macOS/Colima), else fall back to `podman`.
+
+So docker users keep using `claude-docker` unchanged, podman users can use `claude-podman` (or `claude-docker`, which falls back to podman when docker is absent), on macOS, Linux, and Windows alike.
+
+**Windows / Git Bash (MINGW):** run either command from Git Bash with [Podman](https://podman.io/) (`podman machine` providing the Linux backend). The wrapper sets `MSYS_NO_PATHCONV` / `MSYS2_ARG_CONV_EXCL` around the engine invocation so Git Bash does not rewrite container-side paths (`/workspaces/...`) into Windows paths. If an interactive launch ever reports `the input device is not a TTY`, run it from Windows Terminal or prefix with `winpty`.
 
 ## Usage
 
