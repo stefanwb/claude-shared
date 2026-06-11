@@ -6,6 +6,36 @@ set -euo pipefail
 # git-identity forwarding, host-config bind-mounts — without forking it.
 IMAGE="${CLAUDE_DOCKER_IMAGE:-claude-code:local}"
 
+# Container runtime selection, in precedence order:
+#   1. CLAUDE_DOCKER_RUNTIME=docker|podman   — explicit override always wins.
+#   2. argv[0] multi-call dispatch           — invoked as `claude-podman`
+#      (any basename containing "podman") forces podman; this is how the
+#      parallel command works without a second script — install run.sh under
+#      both names (symlink or copy) and the name decides the engine.
+#   3. auto-detect                           — prefer docker when present (the
+#      historical default on macOS/Colima), else fall back to podman. Lets the
+#      default `claude-docker` name work on hosts that only have podman, e.g.
+#      podman on Windows/WSL where no `docker` binary exists.
+RUNTIME="${CLAUDE_DOCKER_RUNTIME:-}"
+if [ -z "$RUNTIME" ]; then
+  case "${0##*/}" in
+    *podman*) RUNTIME=podman ;;
+  esac
+fi
+if [ -z "$RUNTIME" ]; then
+  if command -v docker >/dev/null 2>&1; then
+    RUNTIME=docker
+  elif command -v podman >/dev/null 2>&1; then
+    RUNTIME=podman
+  else
+    echo "claude-docker: no container runtime found — install docker or podman, or set CLAUDE_DOCKER_RUNTIME" >&2
+    exit 1
+  fi
+elif ! command -v "$RUNTIME" >/dev/null 2>&1; then
+  echo "claude-docker: requested runtime '$RUNTIME' not found on PATH" >&2
+  exit 1
+fi
+
 # Keep this in sync with the flag-parsing case statement below — adding or
 # removing a wrapper flag means updating both the case branch and this heredoc
 # in the same diff.
@@ -13,9 +43,13 @@ print_help() {
   cat <<'EOF'
 Usage: claude-docker [OPTIONS] [WORKSPACE...] [-- CLAUDE_FLAGS...]
 
-Hardened Docker wrapper for Claude Code. Wrapper flags and workspace paths
-are parsed before `--`; anything after `--` is forwarded verbatim to the
-`claude` binary inside the container.
+Hardened container wrapper for Claude Code (docker or podman). Wrapper flags
+and workspace paths are parsed before `--`; anything after `--` is forwarded
+verbatim to the `claude` binary inside the container.
+
+Runtime: defaults to docker when present, else podman. Invoke this script as
+`claude-podman` (install it under that name too) to force podman on any OS, or
+set CLAUDE_DOCKER_RUNTIME=docker|podman to override.
 
 Workspaces:
   WORKSPACE...        One or more host directories to mount at
@@ -62,6 +96,8 @@ Environment:
   CLAUDE_DOCKER_IMAGE      Override the image tag (default: claude-code:local).
                            Used by child images that extend this one and want to
                            reuse this wrapper.
+  CLAUDE_DOCKER_RUNTIME    Force the container runtime (docker or podman).
+                           Default: docker if present, else podman.
   CLAUDE_DOCKER_CONFIG_DIR Override the host Claude config dir (same as
                            --claude-dir=PATH).
 
@@ -379,7 +415,14 @@ if [ "$EPHEMERAL" = "0" ]; then
   MOUNT_ARGS=(-v claude-code-root:/root -v claude-code-home:/root/.claude "${MOUNT_ARGS[@]}")
 fi
 
-docker run --rm -it \
+# MSYS_NO_PATHCONV / MSYS2_ARG_CONV_EXCL stop Git Bash (MINGW) from rewriting
+# container-side Unix paths (/workspaces/..., -w, /root/..., --add-dir) into
+# Windows paths before the native docker/podman .exe sees them — the cause of
+# `invalid option type "\Program Files\Git\workspaces\..."`. Host paths in the
+# MSYS form (/c/Users/...) are accepted by the engine as-is, so no cygpath
+# rewrite is needed. Both vars are inert on macOS/Linux, so no platform branch
+# is required; scoped to this single invocation.
+MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*' "$RUNTIME" run --rm -it \
   --security-opt no-new-privileges \
   --cap-drop ALL \
   "${MOUNT_ARGS[@]}" \
