@@ -26,6 +26,12 @@ Workspaces:
 
 Wrapper flags:
   -h, --help          Print this help and exit 0 without starting Docker.
+  --shell             Start an interactive login shell (bash -l) instead of
+                      claude. Keeps every other wrapper feature — workspace
+                      mounts, credential opt-ins, git identity, host config,
+                      persistent volumes — so the container doubles as a dev
+                      environment. Args after -- are forwarded to bash, e.g.
+                      `claude-docker --shell -- -c 'echo hi'`.
   --yolo              Pass --dangerously-skip-permissions to claude.
   --ephemeral         Skip the claude-code-root/claude-code-home named
                       volumes. No OAuth token, gh login, shell history, or
@@ -85,6 +91,7 @@ WORKSPACES=()
 CLAUDE_FLAGS=()
 EPHEMERAL=0
 RO_WORKSPACES=0
+WITH_SHELL=0
 WITH_AWS=0
 WITH_GH=0
 WITH_GLAB=0
@@ -98,6 +105,7 @@ for arg in "$@"; do
   fi
   case "$arg" in
     -h|--help)      print_help; exit 0 ;;
+    --shell)        WITH_SHELL=1 ;;
     --yolo)         CLAUDE_FLAGS+=("--dangerously-skip-permissions") ;;
     --ephemeral)    EPHEMERAL=1 ;;
     --ro)           RO_WORKSPACES=1 ;;
@@ -341,16 +349,24 @@ EOF
   i=$((i + 1))
 done
 
-CMD=(claude)
-# Grant claude read/write access to every mounted workspace, not just cwd.
-# Index 0 is already cwd, so skip it. Repeat --add-dir is allowed; we don't
-# dedupe against any user-supplied --add-dir after `--`.
-n=${#CONTAINER_PATHS[@]}
-i=1
-while [ "$i" -lt "$n" ]; do
-  CMD+=("--add-dir" "${CONTAINER_PATHS[$i]}")
-  i=$((i + 1))
-done
+# --shell swaps the default `claude` command for an interactive login shell so
+# the same mounts/creds/config back a dev environment. --add-dir is a claude
+# flag, so it only applies to the claude command; post-`--` args forward to
+# whichever command runs (claude flags, or args to bash).
+if [ "$WITH_SHELL" = "1" ]; then
+  CMD=(bash -l)
+else
+  CMD=(claude)
+  # Grant claude read/write access to every mounted workspace, not just cwd.
+  # Index 0 is already cwd, so skip it. Repeat --add-dir is allowed; we don't
+  # dedupe against any user-supplied --add-dir after `--`.
+  n=${#CONTAINER_PATHS[@]}
+  i=1
+  while [ "$i" -lt "$n" ]; do
+    CMD+=("--add-dir" "${CONTAINER_PATHS[$i]}")
+    i=$((i + 1))
+  done
+fi
 [ "${#CLAUDE_FLAGS[@]}" -gt 0 ] && CMD+=("${CLAUDE_FLAGS[@]}")
 # CLAUDE_DOCKER_TMUX=1   → plain tmux (works in any terminal)
 # CLAUDE_DOCKER_TMUX=cc  → tmux -CC, iTerm2 control mode (native panes on macOS).
@@ -360,7 +376,7 @@ done
 # stays readable: tmux tears the pane down the moment its command exits AND
 # always returns 0 itself, so without this hold the user sees neither the
 # error message nor a non-zero status — the wrapper just appears to no-op.
-HOLD_ON_ERR='"$@"; rc=$?; if [ $rc -ne 0 ]; then printf "\n[claude exited %d — press Enter to close] " "$rc" >&2; read -r _; fi; exit $rc'
+HOLD_ON_ERR='"$@"; rc=$?; if [ $rc -ne 0 ]; then printf "\n[%s exited %d — press Enter to close] " "$1" "$rc" >&2; read -r _; fi; exit $rc'
 case "${CLAUDE_DOCKER_TMUX:-0}" in
   cc|CC) CMD=(tmux -u -CC new-session -A -s claude sh -c "$HOLD_ON_ERR" _ "${CMD[@]}") ;;
   1)     CMD=(tmux -u     new-session -A -s claude sh -c "$HOLD_ON_ERR" _ "${CMD[@]}") ;;
