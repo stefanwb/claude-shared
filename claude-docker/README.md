@@ -1,6 +1,6 @@
 # claude-docker
 
-Run Claude Code in a container that inherits your setup but not your filesystem. Workspace access is scoped to the directories you pass in; your statusline, skills, agents, and slash commands ride along as read-only bind-mounts. CLI tools are preinstalled (`gh`, `glab`, `aws`, `openspec`, `uv`, `pnpm`, `tfenv`, `git-lfs`) — language runtimes are not: `tfenv` and `uv` fetch your project-pinned Terraform / Python on demand. Host credentials (`gh`, `glab`, `aws`, `tfe`) are opt-in per flag; nothing leaks in by default.
+Run Claude Code in a container that inherits your setup but not your filesystem. Workspace access is scoped to the directories you pass in; your statusline, skills, agents, and slash commands ride along as read-only bind-mounts. CLI tools are preinstalled (`gh`, `glab`, `aws`, `openspec`, `uv`, `pnpm`, `tfenv`, `git-lfs`) — language runtimes are not: `tfenv` and `uv` fetch your project-pinned Terraform / Python on demand. Host credentials (`gh`, `glab`, `aws`, `tfe`) are opt-in per flag; nothing leaks in by default. An optional `--gateway` flag routes the model traffic itself through a self-hosted LLM gateway (e.g. LiteLLM) for outage redundancy or non-Anthropic models.
 
 The VCS and cloud CLIs (`gh`, `glab`, `aws`) need a flag to see host credentials — see [Credential opt-in](#credential-opt-in). The rest work out of the box.
 
@@ -28,7 +28,7 @@ claude-docker ~/repo -- --resume          # any claude flag after --
 
 ### Credential opt-in
 
-**Credentials are off by default.** No AWS / GitHub / GitLab / Terraform Cloud config, tokens, or env vars reach the container unless you explicitly opt in:
+**Credentials are off by default.** No AWS / GitHub / GitLab / Terraform Cloud / LLM-gateway config, tokens, or env vars reach the container unless you explicitly opt in:
 
 | Flag         | Effect |
 |--------------|--------|
@@ -36,6 +36,7 @@ claude-docker ~/repo -- --resume          # any claude flag after --
 | `--gh`       | Forward `GH_TOKEN` / `GITHUB_TOKEN`; if neither is set on the host, the wrapper extracts a token via `gh auth token` (host keychain) and forwards that. Unmasks in-container `gh auth login` state persisted in `claude-code-root` — without this flag, `/root/.config/gh/` is hidden by a tmpfs overlay so a prior login can't leak into a non-opted-in session. |
 | `--glab`     | Mount the platform-appropriate `glab-cli` config dir read-only (macOS: `~/Library/Application Support/glab-cli`, Linux: `~/.config/glab-cli`) and forward `GITLAB_TOKEN`. Unmasks in-container `glab auth login` state — without the flag, `/root/.config/glab-cli/` is hidden by a tmpfs overlay. |
 | `--tfe`      | Mount `~/.terraform.d/credentials.tfrc.json` read-only when present and forward `TF_TOKEN_app_terraform_io`. Targets `app.terraform.io` (HCP Terraform) only — self-hosted Terraform Enterprise hostnames and other `TF_TOKEN_<host>` variables are not forwarded. Unmasks in-container `terraform login` state — without the flag, `/root/.terraform.d/` is hidden by a tmpfs overlay. See [Terraform Cloud workflow](#terraform-cloud-workflow). |
+| `--gateway`  | Route Claude Code through an Anthropic-Messages-compatible LLM gateway (e.g. a self-hosted LiteLLM proxy) for outage redundancy or non-Anthropic models. Forward `ANTHROPIC_BASE_URL` / `ANTHROPIC_AUTH_TOKEN` (bearer) and, when set, the model overrides `ANTHROPIC_MODEL` / `ANTHROPIC_DEFAULT_{OPUS,SONNET,HAIKU,FABLE}_MODEL` and `CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY`. Masks the Anthropic OAuth credential for the session (see below) so auth comes solely from the forwarded token. See [LLM gateway workflow](#llm-gateway-workflow). |
 
 Combine as needed: `claude-docker --aws --gh ~/repo`.
 
@@ -89,13 +90,13 @@ The chosen dir takes the place of `~/.claude` for every item in the parity table
 
 ### Statusline tag for active opt-ins
 
-`run.sh` exports `CLAUDE_DOCKER_FLAGS` into the container with the comma-separated list of active opt-ins (`gh`, `aws`, `glab`, `tfe`, `ephemeral`, `ro`) and wraps the host statusline script so a yellow `docker:<flags>` tag is prepended to whatever your personal statusline renders. The variable is set by the wrapper for the statusline to read — not a user-tunable knob. `--yolo` / `--dangerously-skip-permissions` is not surfaced here — Claude Code's own mode indicator already makes it obvious. The wrapper is a no-op passthrough when no opt-ins are active, so your statusline looks unchanged on a plain `claude-docker ~/repo`.
+`run.sh` exports `CLAUDE_DOCKER_FLAGS` into the container with the comma-separated list of active opt-ins (`gh`, `aws`, `glab`, `tfe`, `gateway`, `ephemeral`, `ro`) and wraps the host statusline script so a yellow `docker:<flags>` tag is prepended to whatever your personal statusline renders. The variable is set by the wrapper for the statusline to read — not a user-tunable knob. `--yolo` / `--dangerously-skip-permissions` is not surfaced here — Claude Code's own mode indicator already makes it obvious. The wrapper is a no-op passthrough when no opt-ins are active, so your statusline looks unchanged on a plain `claude-docker ~/repo`.
 
 The image sets `IS_SANDBOX=1` — historically required to let `--yolo` / `--dangerously-skip-permissions` work when claude ran as root. The entrypoint now drops to the host UID before exec'ing claude, so the root-user check no longer triggers in steady state; `IS_SANDBOX=1` remains as a safety net for the legacy `HOST_UID=0` fall-through path. OS-level hardening comes from `--cap-drop ALL` (with `CHOWN`, `SETUID`, `SETGID`, `DAC_READ_SEARCH` re-added for transient entrypoint use only), `--security-opt no-new-privileges`, the Docker default seccomp profile, `--init` (tini reaps subprocess zombies), and the bind-mount layout. See [File ownership](#file-ownership) and [Threat model](#threat-model) below.
 
 ## Auth model
 
-Credentials are opt-in per run — see [Credential opt-in](#credential-opt-in) above for the per-flag effect, mounts, and env-var forwarding. The subsections below cover the two workflows that need more than a one-line table cell.
+Credentials are opt-in per run — see [Credential opt-in](#credential-opt-in) above for the per-flag effect, mounts, and env-var forwarding. The subsections below cover the workflows that need more than a one-line table cell.
 
 ### AWS SSO flow (`--aws`)
 
@@ -131,6 +132,42 @@ The image ships `tfenv` (a pure-bash terraform version manager) and **does not**
 
 Token alternative: instead of (or in addition to) the credentials file, export `TF_TOKEN_app_terraform_io=<token>` on the host and `--tfe` will forward it. The terraform CLI honours both.
 
+### LLM gateway workflow
+
+`--gateway` points Claude Code at an Anthropic-Messages-compatible LLM gateway instead of `api.anthropic.com` — useful as an outage fallback and for reaching non-Anthropic models the gateway fronts (e.g. via a self-hosted LiteLLM proxy). Standing up the gateway itself is out of scope here; the wrapper only forwards the connection settings and isolates your Anthropic credential.
+
+Claude Code always speaks the Anthropic wire format to the gateway regardless of which backend it routes to, so a non-Anthropic model is just a **model id** — you do not need autodiscovery. Set it explicitly one of two ways:
+
+**Option 1 — set the model directly (simplest).** `ANTHROPIC_MODEL` takes a literal id and overrides everything else (`settings.docker.json`, the `opus[1m]` pin). Whatever string you put here is sent straight to the gateway:
+
+```bash
+export ANTHROPIC_BASE_URL=https://litellm.internal:4000
+export ANTHROPIC_AUTH_TOKEN=sk-litellm-...
+export ANTHROPIC_MODEL=gpt-4o                    # main model — must match a LiteLLM model_name
+export ANTHROPIC_DEFAULT_HAIKU_MODEL=gpt-4o-mini # background/fast model (see below)
+claude-docker --gateway ~/repo
+```
+
+**Option 2 — remap the aliases.** Keep the alias-based UX (the `opus`/`sonnet`/`haiku` entries in the `/model` picker and the `"model": "opus[1m]"` in `settings.docker.json`) but remap what each alias resolves to:
+
+```bash
+export ANTHROPIC_BASE_URL=https://litellm.internal:4000
+export ANTHROPIC_AUTH_TOKEN=sk-litellm-...
+export ANTHROPIC_DEFAULT_OPUS_MODEL=bedrock-claude-sonnet  # what "opus" becomes
+export ANTHROPIC_DEFAULT_SONNET_MODEL=gemini-pro
+export ANTHROPIC_DEFAULT_HAIKU_MODEL=gpt-4o-mini
+claude-docker --gateway ~/repo
+```
+
+Note the `[1m]` suffix in the default `settings.docker.json` is an Anthropic context-window variant and means nothing to a non-Anthropic backend — with a gateway, prefer Option 1 (`ANTHROPIC_MODEL`) to avoid that ambiguity.
+
+Notes:
+
+- **Background model.** Claude Code makes background/fast calls against the haiku slot; if your gateway doesn't serve whatever haiku resolves to, those calls fail — so always point `ANTHROPIC_DEFAULT_HAIKU_MODEL` at a small model it does serve. This is the easiest part to miss.
+- **Model ids are LiteLLM names.** The ids above must match the `model_name` values in your LiteLLM `model_list` config exactly — not the upstream provider's name. Check your gateway config for the right strings.
+- **Autodiscovery is optional.** `CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1` only populates the in-session `/model` picker from the gateway's `/v1/models` so you can switch interactively — it's a convenience on top of the env vars above, never a requirement. You can also just type a model id into `/model` without it.
+- **Credential isolation.** In `--gateway` mode the wrapper masks the persisted Anthropic OAuth token (`/root/.claude/.credentials.json`) with an empty read-only overlay, so a session routed through a third-party gateway can neither use nor read your subscription credential — auth comes solely from `ANTHROPIC_AUTH_TOKEN`. This also means OAuth / `claude login` is unavailable while the flag is set; drop the flag to go back to the Anthropic API on your subscription. Session and project history under `/root/.claude/projects/` still persists and stays unified across gateway and non-gateway runs, so `claude --resume` lists them together.
+
 ## File ownership
 
 Files created inside the container appear on the host owned by the user who launched `claude-docker`, not by `root`. The wrapper forwards `HOST_UID` / `HOST_GID` and the in-container entrypoint creates a matching passwd entry and drops to it via `runuser` before exec'ing claude. Persistent state in the `claude-code-root` and `claude-code-home` named volumes is chowned on first start, so an existing volume from before this change is fixed up the next time you run `claude-docker`.
@@ -140,8 +177,9 @@ Files created inside the container appear on the host owned by the user who laun
 The container narrows blast radius vs. running `claude --yolo` on the host, but it is **not** a full sandbox:
 
 - **Protected:** host filesystem outside your passed workspaces, host `~/.aws/credentials` (long-lived keys), host AWS/glab config dirs are read-only from inside (container can't persist changes back).
-- **Exposed (per session):** your passed workspaces are read-write (unless `--ro`); host credentials when opted in — short-lived AWS SSO bearer tokens (`~/.aws/sso/cache`), the glab config token, `~/.terraform.d/credentials.tfrc.json`, and `GH_TOKEN` / `GITLAB_TOKEN` / `TF_TOKEN_app_terraform_io` / `AWS_*` env vars are all readable inside the container; full outbound network with no egress filtering.
+- **Exposed (per session):** your passed workspaces are read-write (unless `--ro`); host credentials when opted in — short-lived AWS SSO bearer tokens (`~/.aws/sso/cache`), the glab config token, `~/.terraform.d/credentials.tfrc.json`, and `GH_TOKEN` / `GITLAB_TOKEN` / `TF_TOKEN_app_terraform_io` / `AWS_*` env vars are all readable inside the container; under `--gateway`, `ANTHROPIC_BASE_URL` / `ANTHROPIC_AUTH_TOKEN` (your gateway key) are readable inside too; full outbound network with no egress filtering.
 - **Exposed (cross-session):** the persistent `claude-code-root` and `claude-code-home` named volumes hold the Claude OAuth token, in-container `gh` / `glab` / `terraform login` state, shell history, and conversation history. `claude --resume` can replay sessions from **any** past workspace — see [Resuming sessions across workspaces](#resuming-sessions-across-workspaces). Skipped under `--ephemeral`.
+- **Anthropic credential isolation under `--gateway`:** when routing through a third-party gateway, the persisted Anthropic OAuth token (`/root/.claude/.credentials.json`) is masked by an empty read-only overlay so it is neither used nor readable in that session — the gateway sees only the `ANTHROPIC_AUTH_TOKEN` you forwarded, never your subscription credential. The mask is non-destructive: the token reappears on the next non-gateway run.
 - **Runtime code-fetch:** `npx`, `pnpm dlx`, `uvx`, and `tfenv install` fetch and execute arbitrary code from public sources on first use — npm and PyPI for the package managers, `releases.hashicorp.com` for `tfenv install`. Under `--yolo`, a prompt-injected workspace can trigger these. `pnpm dlx` adds zero marginal blast radius vs the already-reachable `npx`; `uvx` is a *new* PyPI execution primitive (no Python runtime existed in the image before); `tfenv install` is a *new* HashiCorp release-channel execution primitive whose downloaded `terraform` binary is intentionally **not** sha256-pinned in the image (versions are project-pinned via `.terraform-version`, so the image stays neutral on version policy). Build-time installs of the CLIs themselves are pinned by version + sha256 where the ecosystem supports it (uv binary, glab .deb, AWS CLI, tfenv source archive), and by version only for npm-backed packages (claude-code, openspec, pnpm) — `--ignore-scripts` blocks lifecycle scripts at install time but does not protect against a compromised registry serving a malicious tarball at the pinned version.
 - **If a session is compromised:** assume exfiltration already happened (full network egress). Then: rotate the host sessions for every flag that was passed (`gh auth refresh` / re-login, `glab auth login`, `aws sso login`, `terraform login`), revoke the Claude OAuth credential, and clear the named volumes (`docker volume rm claude-code-root claude-code-home`) to flush in-container auth state and cross-workspace conversation history that `claude --resume` could otherwise replay.
 

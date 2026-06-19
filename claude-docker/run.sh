@@ -43,6 +43,12 @@ Wrapper flags:
                       ~/.terraform.d/credentials.tfrc.json (:ro) when
                       present and forward TF_TOKEN_app_terraform_io;
                       unmask in-container `terraform login` state.
+  --gateway           Route Claude Code through an Anthropic-Messages-
+                      compatible LLM gateway (e.g. LiteLLM): forward
+                      ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN and the
+                      ANTHROPIC_*_MODEL overrides when set, and mask the
+                      Anthropic OAuth credential for the session so auth
+                      comes solely from the forwarded token.
   --iterm             Wrap claude in tmux -CC (iTerm2 control mode → native
                       panes). Equivalent to CLAUDE_DOCKER_TMUX=cc.
   --tmux              Wrap claude in plain tmux (works in any terminal).
@@ -89,6 +95,7 @@ WITH_AWS=0
 WITH_GH=0
 WITH_GLAB=0
 WITH_TFE=0
+WITH_GATEWAY=0
 CLAUDE_CONFIG_DIR="${CLAUDE_DOCKER_CONFIG_DIR:-$HOME/.claude}"
 saw_sep=0
 for arg in "$@"; do
@@ -105,6 +112,7 @@ for arg in "$@"; do
     --gh)           WITH_GH=1 ;;
     --glab)         WITH_GLAB=1 ;;
     --tfe)          WITH_TFE=1 ;;
+    --gateway)      WITH_GATEWAY=1 ;;
     --iterm)        CLAUDE_DOCKER_TMUX=cc ;;
     --tmux)         CLAUDE_DOCKER_TMUX=1 ;;
     --claude-dir=*) CLAUDE_CONFIG_DIR="${arg#--claude-dir=}" ;;
@@ -189,6 +197,12 @@ ENV_VARS=()
 [ "$WITH_GLAB" = "1" ] && ENV_VARS+=(GITLAB_TOKEN)
 [ "$WITH_AWS" = "1" ]  && ENV_VARS+=(AWS_PROFILE AWS_REGION AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN)
 [ "$WITH_TFE" = "1" ]  && ENV_VARS+=(TF_TOKEN_app_terraform_io)
+# --gateway: route claude through an Anthropic-Messages-compatible LLM gateway.
+# Forward the endpoint, bearer token, and model-selection vars; the loop below
+# forwards each only when set on the host, so unset model overrides never become
+# empty strings in the container. Non-Anthropic backends are picked purely by
+# model id — claude speaks the Anthropic wire format to the gateway regardless.
+[ "$WITH_GATEWAY" = "1" ] && ENV_VARS+=(ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN ANTHROPIC_MODEL ANTHROPIC_DEFAULT_OPUS_MODEL ANTHROPIC_DEFAULT_SONNET_MODEL ANTHROPIC_DEFAULT_HAIKU_MODEL ANTHROPIC_DEFAULT_FABLE_MODEL CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY)
 # Guarded: bash 3.2 under `set -u` errors on empty-array expansion.
 if [ "${#ENV_VARS[@]}" -gt 0 ]; then
   for v in "${ENV_VARS[@]}"; do
@@ -235,6 +249,7 @@ DOCKER_FLAGS=()
 [ "$WITH_AWS" = "1" ]      && DOCKER_FLAGS+=("aws")
 [ "$WITH_GLAB" = "1" ]     && DOCKER_FLAGS+=("glab")
 [ "$WITH_TFE" = "1" ]      && DOCKER_FLAGS+=("tfe")
+[ "$WITH_GATEWAY" = "1" ]  && DOCKER_FLAGS+=("gateway")
 [ "$EPHEMERAL" = "1" ]     && DOCKER_FLAGS+=("ephemeral")
 [ "$RO_WORKSPACES" = "1" ] && DOCKER_FLAGS+=("ro")
 if [ "${#DOCKER_FLAGS[@]}" -gt 0 ]; then
@@ -303,6 +318,23 @@ WRAP
 fi
 [ -f "$CLAUDE_CONFIG_DIR/settings.docker.json" ] \
   && MOUNT_ARGS+=("-v" "$CLAUDE_CONFIG_DIR/settings.docker.json:/root/.claude/settings.json:ro")
+
+# --gateway credential isolation: when routing through a third-party LLM gateway,
+# mask the Anthropic subscription OAuth token (/root/.claude/.credentials.json,
+# persisted in the claude-code-home volume) by overlaying an empty read-only
+# file. The session then authenticates solely via the forwarded
+# ANTHROPIC_AUTH_TOKEN and cannot read or exfiltrate the subscription credential.
+# Session/project history elsewhere under /root/.claude still persists — this is
+# the deliberate, surgical carve-out from persistent-session-storage, chosen over
+# masking the whole dir so `claude --resume` history survives. Docker orders
+# mounts parent-first, so this nested overlay always wins over the
+# claude-code-home volume mount, exactly like the settings.json/CLAUDE.md
+# overlays above; Docker auto-creates the mountpoint, so it is safe even when no
+# prior `claude login` credential exists in the volume.
+if [ "$WITH_GATEWAY" = "1" ]; then
+  : > "$stage/empty-credentials.json"
+  MOUNT_ARGS+=("-v" "$stage/empty-credentials.json:/root/.claude/.credentials.json:ro")
+fi
 
 # Container-only .git/config overlay: enable relative-path worktrees inside the
 # container without touching the host's on-disk repo config. The host file
