@@ -39,9 +39,7 @@ jobs:
     name: Validate
     runs-on: ubuntu-latest
     # No 'if' gate: repo-wide steps (frontmatter, markdown, links) must run on
-    # every PR regardless of which paths changed. claude-docker-scoped steps
-    # (shellcheck, unit tests, hadolint, supply-chain audit) run here too — the
-    # job is cheap enough that per-step path gating isn't worth the complexity.
+    # every PR; the claude-docker-scoped steps are cheap enough to run alongside.
     permissions:
       contents: read
     steps:
@@ -72,21 +70,17 @@ jobs:
         # keyring over dist.integrity (`npm audit signatures`), (2) a soak window
         # since publish so loud supply-chain attacks get yanked before we ingest.
         #
-        # NOTE: the primary soak gate lives in update_pins.py (default 7 days, at
-        # pin-generation time), so a normally-generated pin always clears this.
-        # This 5-day check is a BACKSTOP for manual `update_pins.py --pin`
-        # overrides, which bypass the generator's soak. Keep this window <= the
-        # generator's so generated pins never trip it.
+        # NOTE: the primary soak gate is update_pins.py (default 7 days, at
+        # pin-generation time); this 5-day check only backstops manual `--pin`
+        # overrides that bypass it. Keep this window <= the generator's default.
         run: |
           set -euo pipefail
           audit() {  # $1=npm package  $2=pin file (under pins/)  $3=version var
             local pkg="$1" ver published age scratch
             ver=$(grep -oP "(?<=^$3=).+" "claude-docker/pins/$2") \
               || { echo "::error::could not read $3 from claude-docker/pins/$2"; exit 1; }
-            # `npm view` errors go to stderr (empty stdout), so jq would parse "";
-            # `jq -e` also makes a missing/`null` version entry exit non-zero.
-            # Either way we fail loudly with the package name instead of a cryptic
-            # `date: invalid date 'null'` downstream.
+            # jq -e turns a missing/`null` version entry (or an empty npm-view
+            # result) into a clear failure, not a cryptic `date: invalid date`.
             published=$(npm view "${pkg}@${ver}" time --json | jq -er --arg v "$ver" '.[$v]') \
               || { echo "::error::could not resolve publish time for ${pkg}@${ver} (npm view/jq failed)"; exit 1; }
             age=$(( ( $(date -u +%s) - $(date -u -d "$published" +%s) ) / 86400 ))
@@ -97,6 +91,7 @@ jobs:
             echo "Soak: ${pkg}@${ver} is ${age}d old (>=5d)."
             # `npm audit signatures` needs an installed tree; install into a scratch dir.
             scratch=$(mktemp -d)
+            trap 'rm -rf "$scratch"' RETURN
             ( cd "$scratch" && npm init -y >/dev/null && npm install --ignore-scripts --no-audit --no-fund --silent "${pkg}@${ver}" && npm audit signatures )
           }
           audit "@anthropic-ai/claude-code" claude-code.env CLAUDE_CODE_VERSION
