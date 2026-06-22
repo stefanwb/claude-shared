@@ -81,8 +81,14 @@ jobs:
           set -euo pipefail
           audit() {  # $1=npm package  $2=pin file (under pins/)  $3=version var
             local pkg="$1" ver published age scratch
-            ver=$(grep -oP "(?<=^$3=).+" "claude-docker/pins/$2")
-            published=$(npm view "${pkg}@${ver}" time --json | jq -r --arg v "$ver" '.[$v]')
+            ver=$(grep -oP "(?<=^$3=).+" "claude-docker/pins/$2") \
+              || { echo "::error::could not read $3 from claude-docker/pins/$2"; exit 1; }
+            # `npm view` errors go to stderr (empty stdout), so jq would parse "";
+            # `jq -e` also makes a missing/`null` version entry exit non-zero.
+            # Either way we fail loudly with the package name instead of a cryptic
+            # `date: invalid date 'null'` downstream.
+            published=$(npm view "${pkg}@${ver}" time --json | jq -er --arg v "$ver" '.[$v]') \
+              || { echo "::error::could not resolve publish time for ${pkg}@${ver} (npm view/jq failed)"; exit 1; }
             age=$(( ( $(date -u +%s) - $(date -u -d "$published" +%s) ) / 86400 ))
             if (( age < 5 )); then
               echo "::error::${pkg}@${ver} is ${age}d old (<5d soak). Published ${published}."
