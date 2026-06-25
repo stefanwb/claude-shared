@@ -174,7 +174,7 @@ jobs:
 
           run_cell() {
             echo "--- Cell: $* ---"
-            IMAGE=claude-docker:ci bash claude-docker/test/smoke.sh "$@"
+            IMAGE=claude-docker:ci bash claude-docker/smoke/smoke.sh "$@"
           }
 
           # 1. Baseline: runner UID, cold volume, no opt-ins.
@@ -206,3 +206,8 @@ jobs:
           # 9. Read-only workspace: EROFS robustness — chown on :ro mounts must not
           #    abort the entrypoint; assert no spurious WARN on stderr.
           run_cell --uid="${RUNNER_UID}" --volstate=cold --ro=1 --ephemeral=0
+
+          # 10. Non-runner GID: exercises the entrypoint's `useradd -g $HOST_GID`
+          #     path with a GID that differs from the runner's (asserts the
+          #     dropped process lands in exactly that primary group).
+          run_cell --uid=501 --gid=501 --volstate=cold --ephemeral=0
