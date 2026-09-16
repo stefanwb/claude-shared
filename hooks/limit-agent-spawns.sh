@@ -8,8 +8,8 @@
 # and bypassPermissions modes, so "deny" is the only decision that holds there.
 #
 # Wire it up in settings.json with matcher "Agent|Workflow" (see README).
-# Requires: bash, jq. Uses flock (util-linux) when present; falls back to a
-# mkdir spin lock on hosts without it (macOS).
+# Requires: bash 3.2+ (macOS /bin/bash works), jq. Uses flock (util-linux)
+# when present; falls back to a mkdir spin lock on hosts without it (macOS).
 #
 # Override the cap globally:      CLAUDE_AGENT_SPAWN_LIMIT=4
 # Raise the cap for one session:  echo 4 > <state-dir>/agent-spawns.allow
@@ -20,9 +20,11 @@ set -euo pipefail
 limit="${CLAUDE_AGENT_SPAWN_LIMIT:-2}"
 input="$(cat)"
 
-tool="$(jq -r '.tool_name // empty' <<<"$input")"
-session="$(jq -r '.session_id // "unknown"' <<<"$input")"
-state_dir="$(jq -r '.scratchpad_dir // empty' <<<"$input")"
+tool="$(printf '%s' "$input" | jq -r '.tool_name // empty')"
+session="$(printf '%s' "$input" | jq -r '.session_id // "unknown"')"
+# scratchpad_dir is per session (Claude Code >= 2.1.257); fall back to a
+# session-keyed temp dir on older versions.
+state_dir="$(printf '%s' "$input" | jq -r '.scratchpad_dir // empty')"
 [ -n "$state_dir" ] || state_dir="${TMPDIR:-/tmp}/claude-agent-cap/${session}"
 mkdir -p "$state_dir"
 
@@ -41,12 +43,10 @@ deny() {
   exit 0
 }
 
-# Read the first line of a file into a variable (empty if the file is missing).
-read_file() { # var file
-  local -n out="$1"
-  out=""
-  [ -f "$2" ] || return 0
-  read -r out < "$2" || true
+# Print the first line of a file, or nothing if the file is missing.
+first_line() {
+  [ -f "$1" ] || return 0
+  head -n 1 "$1"
 }
 
 # Parallel Agent calls fire this hook concurrently; serialise the counter update.
@@ -57,17 +57,19 @@ if command -v flock >/dev/null 2>&1; then
   exec 9>"$lock_path"
   flock -w 5 9 || true
 else
-  for _ in $(seq 1 50); do
+  i=0
+  while [ "$i" -lt 50 ]; do
     if mkdir "$lock_path" 2>/dev/null; then break; fi
     sleep 0.1
+    i=$((i + 1))
   done
   trap 'rmdir "$lock_path" 2>/dev/null || true' EXIT
 fi
 
-read_file count "$count_file"
-: "${count:=0}"
-read_file cap "$allow_file"
-: "${cap:=$limit}"
+count="$(first_line "$count_file")"
+count="${count:-0}"
+cap="$(first_line "$allow_file")"
+cap="${cap:-$limit}"
 
 approve_hint="If the user approves in this conversation, raise the session cap with: echo <new-cap> > $allow_file — then retry. Do not run that command without the user's approval."
 
