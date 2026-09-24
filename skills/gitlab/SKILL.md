@@ -64,6 +64,28 @@ glab mr note 45 -m "Closing — superseded by direct commits on main."
 glab mr close 45
 ```
 
+## Keeping MRs in sync
+
+**Before asking the user to review an MR, the title and description must describe the current diff.** This is a gate, not a nicety: do not post "ready for review", assign a reviewer, mark an MR ready, or hand it back to the user until you have re-read the diff and confirmed the title and description still match it.
+
+This applies to every hand-off, not just the first one. The common miss is **rework**: the user reviews, you push fixes, and you hand the MR back with a title and description still describing the original attempt. Re-run the check after every round of rework, including rebases, force-pushes, scope changes, and commits that drop or add work.
+
+Each time you are about to hand an MR back:
+
+1. `glab mr diff <id>` — read what the branch actually does now.
+2. `glab mr view <id>` — read what the MR currently claims.
+3. If they disagree on scope, behaviour, or the test plan, update it before saying anything to the user.
+4. Tell the user you refreshed the title/description, so they know it is current.
+
+```sh
+glab mr update <id> -t "Updated title" -d "$(cat <<'EOF'
+Updated description...
+EOF
+)"
+```
+
+Only a push that leaves the diff's scope unchanged — a typo fix, a lint pass, a comment — needs no edit. When in doubt, update.
+
 ## Reviewing an MR
 
 **Model and effort.** MR reviews run on Opus at **low** effort. Delegate the review to the `tech-lead` agent; its definition pins `model: opus` and `effort: low`, so it is the default path. `/code-review low` is an alternative only when the session model is already Opus, because `/code-review` runs on the session model. Always type the level: a bare `/code-review` reuses whatever level was typed last, not `low`. Do not review at the session's default (higher) effort and do not switch to another model.
@@ -77,6 +99,8 @@ glab mr view <id>                # title, description, state
 glab mr view <id> -F json        # full MR object as JSON (filter with --jq)
 glab mr diff <id>                # full diff
 ```
+
+If the title or description no longer matches the diff, refresh it first (see *Keeping MRs in sync*) — a review against a stale description wastes the reviewer's time.
 
 ### Step 2 — Fetch the diff refs (needed for inline comments)
 
@@ -116,17 +140,6 @@ Approve or revoke only when the user explicitly asks for a verdict; a review wit
 ```sh
 glab mr approve <id>
 glab mr revoke <id>
-```
-
-## Keeping MRs in sync
-
-After a push that changes what an existing MR does (new commits, a rebase that alters scope, a force-push over different work), update the MR title and description to match the current diff without being asked. A push that leaves the diff's scope unchanged, such as a typo fix or a lint pass, needs no description edit.
-
-```sh
-glab mr update <id> -t "Updated title" -d "$(cat <<'EOF'
-Updated description...
-EOF
-)"
 ```
 
 ## `glab ci status`
