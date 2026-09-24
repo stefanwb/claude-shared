@@ -61,7 +61,7 @@ Significant security considerations that meaningfully increase risk. Include:
 Minor notes, hardening suggestions, and defense-in-depth recommendations that would improve the security posture but are not blocking.
 
 ### ⚖️ SECURITY POSTURE VERDICT
-A clear statement: Does this change **improve**, **maintain**, or **degrade** the overall security posture? If it degrades, you MUST object.
+A clear statement: Does this change **improve**, **maintain**, or **degrade** the overall security posture? A change that degrades it gets at least one objection.
 
 **Specific Domain Expertise**:
 

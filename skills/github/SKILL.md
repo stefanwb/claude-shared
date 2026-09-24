@@ -51,14 +51,14 @@ gh run watch <id>               # stream until complete
 
 ## Reviewing a PR
 
-**Model and effort.** PR reviews run on Claude Fable 5.1 at **low** effort. Delegate the review to the `tech-lead` agent; its definition pins `model: fable` and `effort: low`, so it is the default path. `/code-review low` is an alternative only when the session model is already Fable, because `/code-review` runs on the session model. Always type the level: a bare `/code-review` reuses whatever level was typed last, not `low`. Do not review at the session's default (higher) effort and do not switch to another model.
+**Model and effort.** PR reviews run on Opus at **low** effort. Delegate the review to the `tech-lead` agent; its definition pins `model: opus` and `effort: low`, so it is the default path. `/code-review low` is an alternative only when the session model is already Opus, because `/code-review` runs on the session model. Always type the level: a bare `/code-review` reuses whatever level was typed last, not `low`. Do not review at the session's default (higher) effort and do not switch to another model.
 
 **One reviewer, no fan-out.** A review is a single agent's job. Do not spawn extra agents to split a review by file, dimension, or verification pass. If a change needs a specialist pass (security, cost), name it in the review and let the user decide. This is part of the delegation policy: never more than 2 agents per session without explicit approval (see the `claude-shared` README).
 
 **Workflow.**
 
 1. `gh pr view <PR>` and `gh pr diff <PR>` to read the change.
-2. Review via `tech-lead` (or `/code-review low` when the session model is Fable). Fewer, high-confidence findings beat broad speculative ones.
+2. Review via `tech-lead` (or `/code-review low` when the session model is Opus). Fewer, high-confidence findings beat broad speculative ones.
 3. Post one review with all findings via `gh api` (below). Never split findings across multiple reviews.
 
 ## PR Reviews via `gh api`
