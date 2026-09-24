@@ -4,61 +4,51 @@ Shared [Claude Code](https://docs.anthropic.com/en/docs/claude-code) agents and 
 
 ## Structure
 
+This repo is a Claude Code [plugin marketplace](https://code.claude.com/docs/en/plugin-marketplaces) with two plugins:
+
 ```
-agents/                             # Custom agent definitions
-skills/                             # Custom skill definitions
-hooks/                              # Claude Code hooks (install into settings.json)
+.claude-plugin/marketplace.json     # Marketplace: lists both plugins
+.claude-plugin/plugin.json          # Plugin `claude-shared` (the repo root)
+agents/                             # claude-shared: agent definitions
+skills/                             # claude-shared: skills
+hooks/                              # claude-shared: spawn-cap hook + hooks.json
+plugins/guardrails/                 # Plugin `guardrails`: command and file-edit guards
 claude-code-multi-agent-iterm2.md   # Host-side iTerm2/tmux setup for agent teams (non-Docker)
 ```
 
 ## Usage
 
-### Agents
-
-Copy agent files to your local Claude Code config:
-
-```bash
-cp agents/*.md ~/.claude/agents/
-```
-
-Or symlink the directory for auto-updates when you pull:
-
-```bash
-ln -sf "$(pwd)/agents"/*.md ~/.claude/agents/
-```
-
-### Skills
-
-Copy skill directories to your local Claude Code config:
-
-```bash
-cp -r skills/* ~/.claude/skills/
-```
-
-### Hooks
-
-Copy the hook scripts and register them in `~/.claude/settings.json`:
-
-```bash
-mkdir -p ~/.claude/hooks && cp hooks/*.sh ~/.claude/hooks/
-```
+Add the marketplace and enable the plugins in `~/.claude/settings.json`:
 
 ```json
 {
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "Agent|Workflow",
-        "hooks": [
-          { "type": "command", "command": "bash ~/.claude/hooks/limit-agent-spawns.sh" }
-        ]
-      }
-    ]
+  "extraKnownMarketplaces": {
+    "claude-shared": {
+      "source": { "source": "github", "repo": "stefanwb/claude-shared" }
+    }
+  },
+  "enabledPlugins": {
+    "claude-shared@claude-shared": true,
+    "guardrails@claude-shared": true
   }
 }
 ```
 
-Running inside `claude-docker`? `~/.claude/{agents,skills,commands,CLAUDE.md}` are mounted read-only from the host and `settings.json` is seeded from the container image, so hooks registered in your host `settings.json` do not run in the container. Edit this repo and sync to the host config instead of editing the mounted copies.
+Claude Code installs both on the next start. To pin a release, add `"ref": "<tag>"` to the `source` object. Or install interactively:
+
+```bash
+claude plugin marketplace add stefanwb/claude-shared
+claude plugin install claude-shared@claude-shared
+claude plugin install guardrails@claude-shared
+```
+
+Updates are not automatic for this marketplace by default: run `claude plugin marketplace update claude-shared`, then `claude plugin update claude-shared@claude-shared` (and the same for `guardrails`).
+
+**Naming.** Plugin skills are namespaced: invoke them as `/claude-shared:github`, `/claude-shared:gitlab`, and so on. A same-named agent in `~/.claude/agents/` or a project's `.claude/agents/` overrides the plugin's, so remove old copied agent files after switching to the plugin.
+
+**Hooks.** The plugins register their own hooks; do not also register the same scripts in `settings.json`, or they may run twice (for `limit-agent-spawns.sh` that halves the cap).
+
+Running inside `claude-docker`? Enable the plugins in the container's settings too; the container installs them into its own `~/.claude/plugins`.
 
 ### claude-docker
 
@@ -91,13 +81,15 @@ Running inside `claude-docker`? `~/.claude/{agents,skills,commands,CLAUDE.md}` a
 
 | Hook | Event | Description |
 |------|-------|-------------|
-| `limit-agent-spawns.sh` | `PreToolUse` on `Agent` and `Workflow` | Denies the 3rd subagent spawn per session and any `Workflow` run until the user raises the cap |
+| `limit-agent-spawns.sh` (claude-shared) | `PreToolUse` on `Agent` and `Workflow` | Denies the 3rd subagent spawn per session and any `Workflow` run until the user raises the cap |
+| `block-dangerous.sh` (guardrails) | `PreToolUse` on `Bash` | Blocks `rm -rf`, `git reset --hard`, force pushes, `DROP TABLE`/`DATABASE`, and piping `curl`/`wget` into a shell |
+| `protect-files.sh` (guardrails) | `PreToolUse` on `Edit` and `Write` | Blocks edits to `.env*`, lockfiles, keys and certificates, Terraform state, `.claude/settings*.json`, and files under `.git/` or `secrets/` |
 
 ## Delegation Policy
 
 Two rules apply across the agents, skills, and hook in this repo:
 
-1. **PR/MR reviews run on Opus at low effort.** The `tech-lead` agent pins `model: opus` and `effort: low`; the `github` and `gitlab` skills route reviews to it. `/code-review low` is the fallback when the session model is already Opus (it runs on the session model; always type the level, a bare `/code-review` reuses the last level typed). Low effort yields fewer, high-confidence findings, which is what a review should be.
+1. **PR/MR reviews run on Opus at low effort.** The `tech-lead` agent pins `model: opus` and `effort: low`; the `claude-shared:github` and `claude-shared:gitlab` skills route reviews to it. `/code-review low` is the fallback when the session model is already Opus (it runs on the session model; always type the level, a bare `/code-review` reuses the last level typed). Low effort yields fewer, high-confidence findings, which is what a review should be.
 2. **At most 2 spawned agents per session without explicit approval.** `Workflow` runs always need approval. The `create-team` skill and the `tech-lead` agent (which cannot spawn at all) follow this in their instructions; `limit-agent-spawns.sh` enforces it. The hook denies with a message that tells Claude to stop and ask, and prints the command that raises the cap once you have approved.
 
 Put the same two rules in your global `~/.claude/CLAUDE.md` so the main session follows them even when no agent or skill is loaded:
@@ -112,5 +104,7 @@ Put the same two rules in your global `~/.claude/CLAUDE.md` so the main session 
 ## Contributing
 
 1. Create or modify agent/skill files following the [Claude Code agent format](https://docs.anthropic.com/en/docs/claude-code/agents)
-2. Open a PR with your changes
-3. Get a review from a colleague before merging
+2. Run `claude plugin validate .` and `claude plugin validate plugins/guardrails`
+3. Bump `version` in the affected `plugin.json` when the change should reach installed copies
+4. Open a PR with your changes and get a review from a colleague before merging
+5. After merging a version bump, tag the release with `claude plugin tag` (creates `<plugin>--v<version>`)

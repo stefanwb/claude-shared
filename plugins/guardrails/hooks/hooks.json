@@ -1,0 +1,19 @@
+{
+  "description": "Block dangerous shell commands and edits to protected files.",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/block-dangerous.sh\"" }
+        ]
+      },
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/protect-files.sh\"" }
+        ]
+      }
+    ]
+  }
+}

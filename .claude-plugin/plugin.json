@@ -1,0 +1,7 @@
+{
+  "name": "claude-shared",
+  "version": "1.0.0",
+  "description": "Engineering agents, the github/gitlab/create-team/spec skills, and the agent spawn-cap hook.",
+  "author": { "name": "stefanwb" },
+  "repository": "https://github.com/stefanwb/claude-shared"
+}

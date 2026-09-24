@@ -1,0 +1,17 @@
+{
+  "name": "claude-shared",
+  "owner": { "name": "stefanwb" },
+  "description": "Shared Claude Code agents, skills and hooks.",
+  "plugins": [
+    {
+      "name": "claude-shared",
+      "source": "./",
+      "description": "Engineering agents, the github/gitlab/create-team/spec skills, and the agent spawn-cap hook."
+    },
+    {
+      "name": "guardrails",
+      "source": "./plugins/guardrails",
+      "description": "PreToolUse hooks that block dangerous shell commands and edits to secrets, lockfiles and Claude settings."
+    }
+  ]
+}

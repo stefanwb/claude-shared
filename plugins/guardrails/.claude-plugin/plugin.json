@@ -1,0 +1,7 @@
+{
+  "name": "guardrails",
+  "version": "1.0.0",
+  "description": "PreToolUse hooks that block dangerous shell commands and edits to secrets, lockfiles and Claude settings.",
+  "author": { "name": "stefanwb" },
+  "repository": "https://github.com/stefanwb/claude-shared"
+}

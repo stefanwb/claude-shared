@@ -1,0 +1,13 @@
+{
+  "description": "Cap subagent spawns per session and require approval for Workflow runs.",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Agent|Workflow",
+        "hooks": [
+          { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/limit-agent-spawns.sh\"" }
+        ]
+      }
+    ]
+  }
+}
