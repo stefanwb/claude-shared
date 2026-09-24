@@ -31,6 +31,36 @@ EOF
 | `--base <branch>` | Target branch (default: repo default) |
 | `--reviewer <user>` | Request reviewer |
 
+## `gh pr edit`
+
+```sh
+gh pr edit 123 --title "Updated title" --body "$(cat <<'EOF'
+## Summary
+- Updated summary of the current diff
+
+## Test plan
+- [ ] Item one
+EOF
+)"
+```
+
+`--body` replaces the whole body. Read the current body first (`gh pr view 123 --json body --jq '.body'`) if you only mean to amend part of it.
+
+## Keeping PRs in sync
+
+**Before asking the user to review a PR, the title and body must describe the current diff.** This is a gate, not a nicety: do not post "ready for review", request a reviewer, or hand the PR back to the user until you have re-read the diff and confirmed the title and body still match it.
+
+This applies to every hand-off, not just the first one. The common miss is **rework**: the user reviews, you push fixes, and you hand the PR back with a title and body still describing the original attempt. Re-run the check after every round of rework, including rebases, force-pushes, scope changes, and commits that drop or add work.
+
+Each time you are about to hand a PR back:
+
+1. `gh pr diff <PR>` — read what the branch actually does now.
+2. `gh pr view <PR> --json title,body` — read what the PR currently claims.
+3. If they disagree on scope, behaviour, or the test plan, `gh pr edit <PR> --title ... --body ...` before saying anything to the user.
+4. Tell the user you refreshed the title/body, so they know the description is current.
+
+Only a push that leaves the diff's scope unchanged — a typo fix, a lint pass, a comment — needs no edit. When in doubt, edit.
+
 ## `gh pr view / diff / checks`
 
 ```sh
@@ -58,8 +88,9 @@ gh run watch <id>               # stream until complete
 **Workflow.**
 
 1. `gh pr view <PR>` and `gh pr diff <PR>` to read the change.
-2. Review via `tech-lead` (or `/code-review low` when the session model is Opus). Fewer, high-confidence findings beat broad speculative ones.
-3. Post one review with all findings via `gh api` (below). Never split findings across multiple reviews.
+2. If the title or body no longer matches the diff, refresh it first (see *Keeping PRs in sync*) — a review against a stale description wastes the reviewer's time.
+3. Review via `tech-lead` (or `/code-review low` when the session model is Opus). Fewer, high-confidence findings beat broad speculative ones.
+4. Post one review with all findings via `gh api` (below). Never split findings across multiple reviews.
 
 ## PR Reviews via `gh api`
 
