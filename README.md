@@ -44,7 +44,7 @@ claude plugin install guardrails@claude-shared
 
 Updates are not automatic for this marketplace by default: run `claude plugin marketplace update claude-shared`, then `claude plugin update claude-shared@claude-shared` (and the same for `guardrails`).
 
-**Naming.** Plugin skills are namespaced: invoke them as `/claude-shared:github`, `/claude-shared:gitlab`, and so on. A same-named agent in `~/.claude/agents/` or a project's `.claude/agents/` overrides the plugin's, so remove old copied agent files after switching to the plugin.
+**Naming.** Plugin skills and agents are namespaced: invoke skills as `/claude-shared:github`, `/claude-shared:gitlab`, and delegate to agents as `claude-shared:tech-lead`, `claude-shared:architect`, and so on. An old copy in `~/.claude/agents/` still loads under the bare name (`tech-lead`) next to the plugin's, so remove copied agent files after switching to the plugin.
 
 **Hooks.** The plugins register their own hooks; do not also register the same scripts in `settings.json`, or they may run twice (for `limit-agent-spawns.sh` that halves the cap).
 
@@ -96,9 +96,9 @@ Put the same two rules in your global `~/.claude/CLAUDE.md` so the main session 
 
 ```markdown
 ## Reviews and Delegation
-- PR/MR reviews run on Opus at low effort. Delegate to the `tech-lead` agent (pinned to `model: opus`, `effort: low`). Only use `/code-review low` when the session model is already Opus, and always type the level. One reviewer, no fan-out across files or dimensions.
+- PR/MR reviews run on Opus at low effort. Delegate to the `claude-shared:tech-lead` agent (pinned to `model: opus`, `effort: low`). Only use `/code-review low` when the session model is already Opus, and always type the level. One reviewer, no fan-out across files or dimensions.
 - Never spawn more than 2 agents (Agent calls, team teammates, Workflow runs) in a session without my explicit approval. Ask first, listing what each agent would do. Workflow runs always need approval.
-- Delegating a review to `tech-lead` counts as one of the 2.
+- Delegating a review to `claude-shared:tech-lead` counts as one of the 2.
 ```
 
 ## Contributing
