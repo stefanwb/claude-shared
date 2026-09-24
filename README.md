@@ -74,7 +74,7 @@ Running inside `claude-docker`? `~/.claude/{agents,skills,commands,CLAUDE.md}` a
 | `principal-engineer` | opus | session | System design and cross-cutting architectural decisions |
 | `qa-pipeline-expert` | sonnet | session | Testing, linting, and CI/CD pipeline expert |
 | `security-devils-advocate` | opus | session | Adversarial security reviewer |
-| `tech-lead` | fable | low | PR/MR reviewer and pragmatic generalist; cannot spawn subagents |
+| `tech-lead` | opus | low | PR/MR reviewer and pragmatic generalist; cannot spawn subagents |
 
 "session" means the agent inherits the effort level of the session that spawned it.
 
@@ -97,14 +97,14 @@ Running inside `claude-docker`? `~/.claude/{agents,skills,commands,CLAUDE.md}` a
 
 Two rules apply across the agents, skills, and hook in this repo:
 
-1. **PR/MR reviews run on Claude Fable 5.1 at low effort.** The `tech-lead` agent pins `model: fable` and `effort: low`; the `github` and `gitlab` skills route reviews to it. `/code-review low` is the fallback when the session model is already Fable (it runs on the session model; always type the level, a bare `/code-review` reuses the last level typed). Low effort yields fewer, high-confidence findings, which is what a review should be.
+1. **PR/MR reviews run on Opus at low effort.** The `tech-lead` agent pins `model: opus` and `effort: low`; the `github` and `gitlab` skills route reviews to it. `/code-review low` is the fallback when the session model is already Opus (it runs on the session model; always type the level, a bare `/code-review` reuses the last level typed). Low effort yields fewer, high-confidence findings, which is what a review should be.
 2. **At most 2 spawned agents per session without explicit approval.** `Workflow` runs always need approval. The `create-team` skill and the `tech-lead` agent (which cannot spawn at all) follow this in their instructions; `limit-agent-spawns.sh` enforces it. The hook denies with a message that tells Claude to stop and ask, and prints the command that raises the cap once you have approved.
 
 Put the same two rules in your global `~/.claude/CLAUDE.md` so the main session follows them even when no agent or skill is loaded:
 
 ```markdown
 ## Reviews and Delegation
-- PR/MR reviews run on Claude Fable 5.1 at low effort. Delegate to the `tech-lead` agent (pinned to `model: fable`, `effort: low`). Only use `/code-review low` when the session model is already Fable, and always type the level. One reviewer, no fan-out across files or dimensions.
+- PR/MR reviews run on Opus at low effort. Delegate to the `tech-lead` agent (pinned to `model: opus`, `effort: low`). Only use `/code-review low` when the session model is already Opus, and always type the level. One reviewer, no fan-out across files or dimensions.
 - Never spawn more than 2 agents (Agent calls, team teammates, Workflow runs) in a session without my explicit approval. Ask first, listing what each agent would do. Workflow runs always need approval.
 - Delegating a review to `tech-lead` counts as one of the 2.
 ```
