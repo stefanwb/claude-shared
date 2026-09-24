@@ -7,7 +7,9 @@
 # stop and ask. A hook "ask" decision is silently downgraded to "allow" in auto
 # and bypassPermissions modes, so "deny" is the only decision that holds there.
 #
-# Wire it up in settings.json with matcher "Agent|Workflow" (see README).
+# The claude-shared plugin registers it via hooks/hooks.json (matcher
+# "Agent|Workflow"). Without the plugin, register it in settings.json with
+# the same matcher.
 # Requires: bash 3.2+ (macOS /bin/bash works), jq. Uses flock (util-linux)
 # when present; falls back to a mkdir spin lock on hosts without it (macOS).
 #
