@@ -96,7 +96,7 @@ Put the same two rules in your global `~/.claude/CLAUDE.md` so the main session 
 
 ```markdown
 ## Reviews and Delegation
-- PR/MR reviews run on Opus at medium effort. Delegate to the `claude-shared:tech-lead` agent (pinned to `model: opus`, `effort: medium`). Only use `/code-review medium` when the session model is already Opus, and always type the level. One reviewer, no fan-out across files or dimensions.
+- Delegate PR/MR reviews to the `claude-shared:tech-lead` agent (it pins model and effort); load the `claude-shared:github`/`gitlab` skill first for the review workflow. One reviewer, no fan-out across files or dimensions.
 - Never spawn more than 2 agents (Agent calls, team teammates, Workflow runs) in a session without my explicit approval. Ask first, listing what each agent would do. Workflow runs always need approval.
 - Delegating a review to `claude-shared:tech-lead` counts as one of the 2.
 ```
