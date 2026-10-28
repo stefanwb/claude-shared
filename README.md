@@ -89,14 +89,14 @@ Running inside `claude-docker`? Enable the plugins in the container's settings t
 
 Two rules apply across the agents, skills, and hook in this repo:
 
-1. **PR/MR reviews run on Opus at low effort.** The `tech-lead` agent pins `model: opus` and `effort: low`; the `claude-shared:github` and `claude-shared:gitlab` skills route reviews to it. `/code-review low` is the fallback when the session model is already Opus (it runs on the session model; always type the level, a bare `/code-review` reuses the last level typed). Low effort yields fewer, high-confidence findings, which is what a review should be.
+1. **PR/MR reviews run on Opus at medium effort.** The `tech-lead` agent pins `model: opus` and `effort: medium`; the `claude-shared:github` and `claude-shared:gitlab` skills route reviews to it. `/code-review medium` is the fallback when the session model is already Opus (it runs on the session model; always type the level, a bare `/code-review` reuses the last level typed). Medium effort keeps findings high-confidence while giving the reviewer enough depth to trace non-obvious bugs.
 2. **At most 2 spawned agents per session without explicit approval.** `Workflow` runs always need approval. The `create-team` skill and the `tech-lead` agent (which cannot spawn at all) follow this in their instructions; `limit-agent-spawns.sh` enforces it. The hook denies with a message that tells Claude to stop and ask, and prints the command that raises the cap once you have approved.
 
 Put the same two rules in your global `~/.claude/CLAUDE.md` so the main session follows them even when no agent or skill is loaded:
 
 ```markdown
 ## Reviews and Delegation
-- PR/MR reviews run on Opus at low effort. Delegate to the `claude-shared:tech-lead` agent (pinned to `model: opus`, `effort: low`). Only use `/code-review low` when the session model is already Opus, and always type the level. One reviewer, no fan-out across files or dimensions.
+- Delegate PR/MR reviews to the `claude-shared:tech-lead` agent (it pins model and effort); load the `claude-shared:github`/`gitlab` skill first for the review workflow. One reviewer, no fan-out across files or dimensions.
 - Never spawn more than 2 agents (Agent calls, team teammates, Workflow runs) in a session without my explicit approval. Ask first, listing what each agent would do. Workflow runs always need approval.
 - Delegating a review to `claude-shared:tech-lead` counts as one of the 2.
 ```
